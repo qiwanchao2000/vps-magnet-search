@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>磁力魔 VPS版</title>
+    <style>
+        :root { --bg:#121212; --card:#1e1e1e; --input:#2b2b2b; --blue:#0d6efd; --text:#e0e0e0; --sub:#a0a0a0; --green:#2ea043; --red:#ff6b6b; }
+        body { background-color:var(--bg); color:var(--text); font-family:sans-serif; margin:0; padding:20px; }
+        .container { max-width:900px; margin:0 auto; }
+        .header { font-size:24px; font-weight:bold; margin-bottom:20px; display:flex; align-items:center; gap:10px; }
+        .search-box { background:var(--card); padding:25px; border-radius:12px; margin-bottom:30px; box-shadow:0 4px 12px rgba(0,0,0,0.5); }
+        input { width:100%; background:var(--input); border:1px solid #333; color:#fff; padding:14px; border-radius:8px; font-size:16px; box-sizing:border-box; margin-bottom:15px; outline:none; transition:border 0.2s; }
+        input:focus { border-color:var(--blue); }
+        button { width:100%; background:var(--blue); color:#fff; border:none; padding:14px; border-radius:8px; font-size:16px; font-weight:bold; cursor:pointer; display:flex; justify-content:center; align-items:center; gap:8px; }
+        button:hover { background:#0b5ed7; }
+        button:disabled { background:#444; cursor:not-allowed; }
+        
+        .result { background:var(--card); padding:18px; margin-bottom:12px; border-radius:10px; border-left:4px solid var(--blue); transition:transform 0.2s; }
+        .result:hover { transform:translateX(5px); }
+        .title { color:#58a6ff; font-size:17px; font-weight:600; text-decoration:none; display:block; margin-bottom:8px; word-break:break-all; }
+        .meta { display:flex; gap:15px; font-size:13px; color:var(--sub); align-items:center; flex-wrap:wrap; }
+        .badge { padding:2px 6px; border-radius:4px; font-size:12px; font-weight:bold; color:#fff; }
+        .bg-Solid { background:#ff9f43; } .bg-Bit { background:#ee5253; } .bg-YTS { background:#10ac84; }
+        
+        .copy-btn { margin-left:auto; background:rgba(46,160,67,0.15); color:var(--green); padding:5px 12px; border-radius:6px; cursor:pointer; border:1px solid rgba(46,160,67,0.3); }
+        .copy-btn:hover { background:rgba(46,160,67,0.25); }
+        .spinner { width:18px; height:18px; border:2px solid #fff; border-bottom-color:transparent; border-radius:50%; animation:spin 1s linear infinite; display:none; }
+        @keyframes spin { to {transform:rotate(360deg);} }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="header">🚀 磁力魔 (US-VPS)</div>
+    <div class="search-box">
+        <form method="POST" onsubmit="loading()">
+            <input type="text" name="keyword" placeholder="搜索 电影 / 剧集 / 软件..." value="{{ keyword }}" required autocomplete="off">
+            <button type="submit" id="btn">
+                <span class="spinner" id="spin"></span>
+                <span id="txt">立即搜索</span>
+            </button>
+        </form>
+    </div>
+    {% if error %} <div style="color:var(--red);text-align:center;margin-bottom:20px;">{{ error }}</div> {% endif %}
+    {% for item in results %}
+    <div class="result">
+        <a href="{{ item.magnet }}" class="title">
+            <span class="badge bg-{{ item.engine }}">{{ item.engine }}</span> {{ item.name }}
+        </a>
+        <div class="meta">
+            <span>📦 {{ item.size }}</span> <span>📅 {{ item.date }}</span>
+            <span style="color:#58a6ff">⬆ {{ item.seeders }}</span> <span style="color:#ff6b6b">⬇ {{ item.leechers }}</span>
+            <div class="copy-btn" onclick="copy('{{ item.magnet }}', this)">复制链接</div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+<script>
+    function loading() {
+        document.getElementById('btn').disabled = true;
+        document.getElementById('spin').style.display = 'block';
+        document.getElementById('txt').innerText = '正在极速搜索...';
+    }
+    function copy(txt, el) {
+        navigator.clipboard.writeText(txt);
+        let old = el.innerText; el.innerText = "✅ 已复制";
+        setTimeout(() => el.innerText = old, 2000);
+    }
+</script>
+</body>
+</html>
