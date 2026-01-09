@@ -1,122 +1,70 @@
 from flask import Flask, render_template, request
-import cloudscraper
 import requests
 import concurrent.futures
-import time
-from bs4 import BeautifulSoup
 import urllib.parse
+import time
 
 app = Flask(__name__)
 
-# 使用 Cloudscraper 模拟桌面 Chrome 浏览器
-scraper = cloudscraper.create_scraper(
-    browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True}
-)
+# 基础请求头
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+}
 
 def format_size(size):
-    # 简单的格式化，如果在源站拿到的就是字符串则直接返回
-    return str(size)
-
-# === 引擎 1: BT4G (主力，抗封能力极强) ===
-def search_bt4g(kw):
     try:
-        # bt4gprx.com 是它的官方代理域名，比主域名更稳
-        url = f"https://bt4gprx.com/search?q={urllib.parse.quote(kw)}"
-        print(f"[BT4G] Searching: {url}")
+        size = int(size)
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size < 1024: return f"{size:.1f} {unit}"
+            size /= 1024
+        return f"{size:.1f} PB"
+    except: return str(size)
+
+# === 源 1: APIBay (海盗湾) - 核心主力 ===
+# 这是一个纯 API，不经过 Cloudflare 验证，VPS 99% 能连上
+def search_apibay(kw):
+    url = "https://apibay.org/q.php"
+    # cat=0 代表所有类别
+    params = {'q': kw, 'cat': ''}
+    try:
+        print(f"[APIBay] 请求中: {kw}")
+        resp = requests.get(url, params=params, headers=HEADERS, timeout=10)
+        data = resp.json()
         
-        resp = scraper.get(url, timeout=15)
-        
-        if resp.status_code != 200:
-            print(f"[BT4G] Failed: {resp.status_code}")
+        # APIBay 如果没结果会返回 id=0
+        if data and data[0].get('id') == '0':
             return []
-
-        soup = BeautifulSoup(resp.text, 'html.parser')
+            
         results = []
-        
-        # BT4G 的列表结构
-        for item in soup.select('div.row.marketing div.card'):
-            try:
-                title_tag = item.select_one('h5.card-title a')
-                if not title_tag: continue
-                name = title_tag.get_text(strip=True)
-                magnet = item.select_one('a[href^="magnet:"]')['href']
-                
-                # 提取信息
-                stats = item.select('.card-body span')
-                # 通常是: [Create Time, Size, Seeders, Leechers]
-                size = "N/A"
-                seeders = "0"
-                leechers = "0"
-                date = "Unknown"
-                
-                for stat in stats:
-                    txt = stat.get_text(strip=True)
-                    if 'Size:' in txt: size = txt.replace('Size:', '').strip()
-                    if 'Seeds:' in txt: seeders = txt.replace('Seeds:', '').strip()
-                    if 'Leechers:' in txt: leechers = txt.replace('Leechers:', '').strip()
-                    if 'Create Time:' in txt: date = txt.replace('Create Time:', '').strip()
-
-                results.append({
-                    'engine': 'BT4G',
-                    'name': name,
-                    'size': size,
-                    'date': date,
-                    'magnet': magnet,
-                    'seeders': seeders,
-                    'leechers': leechers
-                })
-            except Exception as e:
-                continue
-        print(f"[BT4G] Found {len(results)} items")
+        for i in data:
+            if i.get('name') == 'No results returned': continue
+            
+            # 构造磁力链
+            magnet = f"magnet:?xt=urn:btih:{i['info_hash']}&dn={urllib.parse.quote(i['name'])}"
+            
+            results.append({
+                'engine': 'ThePirateBay',
+                'name': i['name'],
+                'size': format_size(i['size']),
+                'date': "Unknown", # APIBay 不返回具体日期，只返回时间戳，这里简化处理
+                'magnet': magnet,
+                'seeders': i['seeders'],
+                'leechers': i['leechers']
+            })
+        print(f"[APIBay] 找到 {len(results)} 个结果")
         return results
     except Exception as e:
-        print(f"[BT4G] Error: {e}")
+        print(f"[APIBay] Error: {e}")
         return []
 
-# === 引擎 2: MagnetDL (纯静态，速度快) ===
-def search_magnetdl(kw):
-    try:
-        # MagnetDL 必须处理关键词：空格转横杠
-        clean_kw = kw.strip().lower().replace(" ", "-")
-        url = f"https://www.magnetdl.com/{clean_kw[0]}/{clean_kw}/"
-        print(f"[MagnetDL] Searching: {url}")
-        
-        resp = scraper.get(url, timeout=15)
-        if resp.status_code != 200: return []
-
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        results = []
-        
-        rows = soup.select('table.download tbody tr')
-        for row in rows:
-            try:
-                cols = row.find_all('td')
-                if len(cols) < 8: continue
-                
-                magnet_tag = cols[0].find('a', href=True)
-                if not magnet_tag: continue
-                
-                results.append({
-                    'engine': 'MagnetDL',
-                    'name': cols[1].get_text(strip=True),
-                    'size': cols[5].get_text(strip=True),
-                    'date': cols[2].get_text(strip=True),
-                    'magnet': magnet_tag['href'],
-                    'seeders': cols[6].get_text(strip=True),
-                    'leechers': cols[7].get_text(strip=True)
-                })
-            except: continue
-        print(f"[MagnetDL] Found {len(results)} items")
-        return results
-    except Exception as e:
-        print(f"[MagnetDL] Error: {e}")
-        return []
-
-# === 引擎 3: YTS (官方API，不用爬虫) ===
+# === 源 2: YTS (官方 API) - 电影主力 ===
+# 官方提供给开发者的，绝对稳
 def search_yts(kw):
     url = "https://yts.mx/api/v2/list_movies.json"
+    params = {"query_term": kw, "limit": 20}
     try:
-        resp = requests.get(url, params={"query_term": kw, "limit": 10}, timeout=10)
+        print(f"[YTS] 请求中: {kw}")
+        resp = requests.get(url, params=params, headers=HEADERS, timeout=10)
         data = resp.json()
         results = []
         if data.get('status') == 'ok' and data['data'].get('movie_count') > 0:
@@ -125,13 +73,50 @@ def search_yts(kw):
                     magnet = f"magnet:?xt=urn:btih:{t['hash']}&dn={urllib.parse.quote(m['title'])}"
                     results.append({
                         'engine': 'YTS',
-                        'name': f"{m['title']} ({t['quality']})",
+                        'name': f"{m['title_long']} ({t['quality']})",
                         'size': t['size'],
                         'date': str(m['year']),
                         'magnet': magnet,
                         'seeders': str(t['seeds']),
                         'leechers': str(t['peers'])
                     })
+        print(f"[YTS] 找到 {len(results)} 个结果")
+        return results
+    except Exception as e:
+        print(f"[YTS] Error: {e}")
+        return []
+
+# === 源 3: BT4G (备用) ===
+# 尝试直接请求
+def search_bt4g(kw):
+    try:
+        url = f"https://bt4gprx.com/search?q={urllib.parse.quote(kw)}"
+        # BT4G 有时候需要更像浏览器的 Header
+        h = HEADERS.copy()
+        h['Referer'] = 'https://bt4gprx.com/'
+        
+        resp = requests.get(url, headers=h, timeout=8)
+        if resp.status_code != 200: return []
+        
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        results = []
+        
+        for item in soup.select('div.row.marketing div.card'):
+            try:
+                title = item.select_one('h5.card-title a').get_text(strip=True)
+                link = item.select_one('a[href^="magnet:"]')['href']
+                # 简单提取，不纠结详细信息，保证能拿到链接
+                results.append({
+                    'engine': 'BT4G',
+                    'name': title,
+                    'size': 'N/A',
+                    'date': 'Unknown',
+                    'magnet': link,
+                    'seeders': '?',
+                    'leechers': '?'
+                })
+            except: continue
         return results
     except: return []
 
@@ -145,21 +130,20 @@ def index():
         kw = request.form.get('keyword')
         if kw:
             start_t = time.time()
-            # 并发搜索
+            # 并发请求
             with concurrent.futures.ThreadPoolExecutor() as executor:
-                f1 = executor.submit(search_bt4g, kw)
-                f2 = executor.submit(search_magnetdl, kw)
-                f3 = executor.submit(search_yts, kw)
+                f1 = executor.submit(search_apibay, kw)
+                f2 = executor.submit(search_yts, kw)
+                f3 = executor.submit(search_bt4g, kw)
                 
+                # 优先显示 APIBay 和 YTS 的结果，因为它们最准
                 results = f1.result() + f2.result() + f3.result()
             
             duration = round(time.time() - start_t, 2)
             if not results:
-                # 打印到 Docker 日志，方便排查
-                print("No results found. Sources might be blocking the IP.")
-                error = f"未找到资源 (耗时 {duration}s) - 可能 VPS IP 被反爬拦截"
+                error = f"未找到资源 (耗时 {duration}s)。可能关键词无结果，或 VPS IP 被所有源站屏蔽。"
             else:
-                # 简单的去重
+                # 简单的磁力链去重
                 seen = set()
                 unique = []
                 for item in results:
